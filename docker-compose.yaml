@@ -1,0 +1,40 @@
+name: mmxxvi-library
+
+services:
+  api:
+    build:
+      context: ./api
+    container_name: library-api
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /app/data/library.db
+      PAGE_MAX_CHARS: ${PAGE_MAX_CHARS:-4000}
+    ports:
+      - "${API_PORT:-9821}:8000"
+    volumes:
+      - library-data:/app/data
+      - ./frontend:/app/static:ro
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  mcp:
+    build:
+      context: ./mcp
+    container_name: library-mcp
+    restart: unless-stopped
+    environment:
+      DATABASE_PATH: /app/data/library.db
+      PAGE_MAX_CHARS: ${PAGE_MAX_CHARS:-4000}
+    ports:
+      - "${MCP_PORT:-9823}:8000"
+    volumes:
+      - library-data:/app/data:ro
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  library-data:

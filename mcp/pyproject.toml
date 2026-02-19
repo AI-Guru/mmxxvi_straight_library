@@ -1,0 +1,8 @@
+[project]
+name = "straight-library-mcp"
+version = "1.0.0"
+description = "Straight Library MCP Server"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp>=3.0.0",
+]

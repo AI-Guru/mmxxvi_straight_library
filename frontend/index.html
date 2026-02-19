@@ -1,0 +1,79 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Straight Library</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="app">
+        <header>
+            <h1>Straight Library</h1>
+            <nav class="tabs">
+                <button class="tab active" data-tab="browse">Browse</button>
+                <button class="tab" data-tab="read">Read</button>
+                <button class="tab" data-tab="upload">Upload</button>
+            </nav>
+        </header>
+        <main>
+            <!-- Upload Tab -->
+            <section class="tab-content" id="tab-upload">
+                <div class="card">
+                    <form id="upload-form">
+                        <div class="drop-zone" id="drop-zone">
+                            <p>Drag &amp; drop _libraryentry.md files here or click to select</p>
+                            <input type="file" id="file-input" accept=".md" multiple>
+                        </div>
+                        <button type="submit" id="upload-btn" disabled>Upload</button>
+                    </form>
+                    <div id="upload-status" class="status"></div>
+                </div>
+            </section>
+
+            <!-- Browse Tab -->
+            <section class="tab-content active" id="tab-browse">
+                <div class="card">
+                    <div class="filters">
+                        <input type="text" id="filter-title" placeholder="Title...">
+                        <input type="text" id="filter-author" placeholder="Author...">
+                        <input type="text" id="filter-genre" placeholder="Genre...">
+                        <input type="text" id="filter-tag" placeholder="Tag...">
+                        <input type="number" id="filter-year-min" placeholder="Year from">
+                        <input type="number" id="filter-year-max" placeholder="Year to">
+                    </div>
+                    <div id="entries-count" class="count"></div>
+                    <div id="entries-list" class="entries-list">
+                        <p class="loading">Loading entries...</p>
+                    </div>
+                    <div class="pagination" id="entries-pagination"></div>
+                </div>
+            </section>
+
+            <!-- Read Tab -->
+            <section class="tab-content" id="tab-read">
+                <div class="card">
+                    <div id="read-placeholder" class="placeholder">
+                        <p>Select an entry from the Browse tab to start reading.</p>
+                    </div>
+                    <div id="read-content" style="display:none;">
+                        <div id="read-entry-info" class="entry-info"></div>
+                        <div class="section-selector">
+                            <button class="section-btn active" data-section="shortsummary">Short Summary</button>
+                            <button class="section-btn" data-section="summary">Summary</button>
+                            <button class="section-btn" data-section="fulltext">Full Text</button>
+                        </div>
+                        <div id="page-content" class="page-content"></div>
+                        <div class="pagination" id="page-pagination"></div>
+                    </div>
+                </div>
+            </section>
+        </main>
+        <footer>
+            <span>Straight Library v1.0.0</span>
+            <span>MCP: <code>http://localhost:9823</code></span>
+        </footer>
+    </div>
+    <script src="app.js"></script>
+</body>
+</html>
