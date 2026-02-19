@@ -1,5 +1,7 @@
 # Straight Library
 
+![Straight Library](straightlibrary.png)
+
 A library browser exposing book metadata, summaries, and full texts via API, MCP, and Web UI. Content is pre-paginated in SQLite for fast retrieval.
 
 ## Architecture
