@@ -61,3 +61,26 @@ class StatusResponse(BaseModel):
     status: str
     version: str = "1.0.0"
     total_entries: int
+
+
+class SemanticSearchRequest(BaseModel):
+    query: str = Field(..., min_length=1, description="Natural language search query")
+    entry_id: Optional[str] = Field(default=None, description="Limit to specific entry")
+    section: Optional[str] = Field(default=None, description="Limit to section")
+    limit: int = Field(default=10, ge=1, le=50, description="Max results")
+
+
+class SemanticSearchResult(BaseModel):
+    entry_id: str
+    title: str
+    author: str
+    section: str
+    page_number: int
+    chunk_index: int
+    snippet: str
+
+
+class SemanticSearchResponse(BaseModel):
+    query: str
+    results: List[SemanticSearchResult]
+    total_results: int

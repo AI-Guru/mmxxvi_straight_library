@@ -1,11 +1,8 @@
-from psycopg_pool import AsyncConnectionPool
-from psycopg.rows import dict_row
+-- Enable pgvector extension (required by LangGraph store for semantic search)
+CREATE EXTENSION IF NOT EXISTS vector;
 
-from config import settings
+-- Library schema
 
-_pool: AsyncConnectionPool | None = None
-
-SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS metadata (
     id TEXT PRIMARY KEY,
     title TEXT NOT NULL,
@@ -62,33 +59,6 @@ CREATE INDEX IF NOT EXISTS idx_metadata_genre ON metadata(genre);
 CREATE INDEX IF NOT EXISTS idx_metadata_year ON metadata(publication_year);
 CREATE INDEX IF NOT EXISTS idx_chapters_id ON chapters(id);
 CREATE INDEX IF NOT EXISTS idx_content_fts_tsv ON content_fts USING GIN(tsv);
-"""
 
-
-async def get_pool() -> AsyncConnectionPool:
-    """Get or create the async connection pool."""
-    global _pool
-    if _pool is None:
-        _pool = AsyncConnectionPool(
-            conninfo=settings.postgres_url,
-            min_size=2,
-            max_size=10,
-            kwargs={"row_factory": dict_row},
-        )
-        await _pool.open()
-    return _pool
-
-
-async def init_db():
-    """Ensure library tables exist in PostgreSQL."""
-    pool = await get_pool()
-    async with pool.connection() as conn:
-        await conn.execute(SCHEMA_SQL)
-
-
-async def close_pool():
-    """Close the connection pool."""
-    global _pool
-    if _pool is not None:
-        await _pool.close()
-        _pool = None
+-- Note: LangGraph's AsyncPostgresStore creates its own tables automatically
+-- via store.setup(). No custom table definitions needed for semantic search.

@@ -3,7 +3,7 @@ from typing import Optional
 
 from fastapi import APIRouter, HTTPException, Query
 
-from database import get_db
+from database import get_pool
 from models.schemas import EntryMetadata, EntryListResponse, PageResponse, DeleteResponse
 
 router = APIRouter(prefix="/api/entries", tags=["library"])
@@ -23,46 +23,51 @@ async def list_entries(
     year_max: Optional[int] = Query(default=None),
 ):
     """List library entries with optional filtering and pagination."""
-    db = get_db()
+    pool = await get_pool()
 
     where_clauses = []
-    params = []
+    params: dict = {}
 
     if title:
-        where_clauses.append("title LIKE ?")
-        params.append(f"%{title}%")
+        where_clauses.append("title ILIKE %(title)s")
+        params["title"] = f"%{title}%"
     if author:
-        where_clauses.append("author LIKE ?")
-        params.append(f"%{author}%")
+        where_clauses.append("author ILIKE %(author)s")
+        params["author"] = f"%{author}%"
     if genre:
-        where_clauses.append("genre LIKE ?")
-        params.append(f"%{genre}%")
+        where_clauses.append("genre ILIKE %(genre)s")
+        params["genre"] = f"%{genre}%"
     if tag:
-        where_clauses.append("custom_tags LIKE ?")
-        params.append(f"%{tag}%")
+        where_clauses.append("custom_tags ILIKE %(tag)s")
+        params["tag"] = f"%{tag}%"
     if year_min is not None:
-        where_clauses.append("publication_year >= ?")
-        params.append(year_min)
+        where_clauses.append("publication_year >= %(year_min)s")
+        params["year_min"] = year_min
     if year_max is not None:
-        where_clauses.append("publication_year <= ?")
-        params.append(year_max)
+        where_clauses.append("publication_year <= %(year_max)s")
+        params["year_max"] = year_max
 
     where_sql = " AND ".join(where_clauses) if where_clauses else "1=1"
 
-    count_row = db.execute(
-        f"SELECT COUNT(*) as cnt FROM metadata WHERE {where_sql}", params
-    ).fetchone()
-    total = count_row["cnt"]
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            f"SELECT COUNT(*) as cnt FROM metadata WHERE {where_sql}", params
+        )
+        count_row = await cur.fetchone()
+        total = count_row["cnt"]
 
-    rows = db.execute(
-        f"""SELECT id, title, author, publication_year, genre, custom_tags,
-                   shortsummary_pages, summary_pages, fulltext_pages
-            FROM metadata
-            WHERE {where_sql}
-            ORDER BY title
-            LIMIT ? OFFSET ?""",
-        params + [limit, skip],
-    ).fetchall()
+        params["limit"] = limit
+        params["skip"] = skip
+        cur = await conn.execute(
+            f"""SELECT id, title, author, publication_year, genre, custom_tags,
+                       shortsummary_pages, summary_pages, fulltext_pages
+                FROM metadata
+                WHERE {where_sql}
+                ORDER BY title
+                LIMIT %(limit)s OFFSET %(skip)s""",
+            params,
+        )
+        rows = await cur.fetchall()
 
     entries = [
         EntryMetadata(
@@ -95,27 +100,38 @@ async def get_entry_page(
             detail=f"Section must be one of: {', '.join(VALID_SECTIONS)}",
         )
 
-    db = get_db()
+    pool = await get_pool()
+    col = f"{section}_pages"
 
-    # Get total pages from metadata.
-    meta_row = db.execute(
-        f"SELECT {section}_pages FROM metadata WHERE id = ?", (entry_id,)
-    ).fetchone()
-    if meta_row is None:
-        raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
-
-    total_pages = meta_row[f"{section}_pages"]
-
-    if page > total_pages:
-        raise HTTPException(
-            status_code=400, detail=f"Page {page} out of range (1-{total_pages})"
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            f"SELECT {col} FROM metadata WHERE id = %(id)s", {"id": entry_id}
         )
+        meta_row = await cur.fetchone()
+        if meta_row is None:
+            raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
 
-    # Fetch the specific page.
-    row = db.execute(
-        f"SELECT content FROM {section} WHERE id = ? AND page = ?",
-        (entry_id, page),
-    ).fetchone()
+        total_pages = meta_row[col]
+
+        if total_pages == 0:
+            return PageResponse(
+                entry_id=entry_id,
+                section=section,
+                page_number=0,
+                total_pages=0,
+                content="",
+            )
+
+        if page > total_pages:
+            raise HTTPException(
+                status_code=400, detail=f"Page {page} out of range (1-{total_pages})"
+            )
+
+        cur = await conn.execute(
+            f"SELECT content FROM {section} WHERE id = %(id)s AND page = %(page)s",
+            {"id": entry_id, "page": page},
+        )
+        row = await cur.fetchone()
 
     return PageResponse(
         entry_id=entry_id,
@@ -129,19 +145,33 @@ async def get_entry_page(
 @router.delete("/{entry_id}", response_model=DeleteResponse)
 async def delete_entry(entry_id: str):
     """Delete a library entry and all its pages."""
-    db = get_db()
+    pool = await get_pool()
 
-    row = db.execute(
-        "SELECT title FROM metadata WHERE id = ?", (entry_id,)
-    ).fetchone()
-    if row is None:
-        raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            "SELECT title FROM metadata WHERE id = %(id)s", {"id": entry_id}
+        )
+        row = await cur.fetchone()
+        if row is None:
+            raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
 
-    title = row["title"]
-    db.execute("DELETE FROM content_fts WHERE id = ?", (entry_id,))
-    for table in ("chapters", "shortsummary", "summary", "fulltext", "metadata"):
-        db.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
-    db.commit()
+        title = row["title"]
+        # CASCADE deletes all related rows in content tables, chapters, and content_fts.
+        await conn.execute(
+            "DELETE FROM metadata WHERE id = %(id)s", {"id": entry_id}
+        )
+
+    # Clean up pgvector embeddings.
+    try:
+        from store import get_store, CHUNKS_NAMESPACE
+
+        store = await get_store()
+        chunk_namespace = (*CHUNKS_NAMESPACE, entry_id)
+        old_items = await store.asearch(chunk_namespace, query=None, limit=10000)
+        for old_item in old_items:
+            await store.adelete(chunk_namespace, old_item.key)
+    except Exception as e:
+        print(f"Warning: pgvector cleanup failed for {entry_id}: {e}")
 
     return DeleteResponse(
         status="ok",

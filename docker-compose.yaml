@@ -1,24 +1,56 @@
 name: mmxxvi-library
 
 services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: library-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-librarypassword}
+      POSTGRES_USER: ${POSTGRES_USER:-libraryuser}
+      POSTGRES_DB: ${POSTGRES_DB:-librarydb}
+    ports:
+      - "${POSTGRES_PORT:-9822}:5432"
+    volumes:
+      - ./init/init.sql:/docker-entrypoint-initdb.d/init.sql
+      - postgres-data:/var/lib/postgresql/data
+    networks:
+      - library-network
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-libraryuser} -d ${POSTGRES_DB:-librarydb}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   api:
     build:
       context: ./api
     container_name: library-api
     restart: unless-stopped
     environment:
-      DATABASE_PATH: /app/data/library.db
       PAGE_MAX_CHARS: ${PAGE_MAX_CHARS:-4000}
+      POSTGRES_URL: postgresql://${POSTGRES_USER:-libraryuser}:${POSTGRES_PASSWORD:-librarypassword}@postgres:5432/${POSTGRES_DB:-librarydb}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-qwen3-embedding:0.6b}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
+      CHUNK_SIZE: ${CHUNK_SIZE:-1000}
+      CHUNK_OVERLAP: ${CHUNK_OVERLAP:-100}
     ports:
       - "${API_PORT:-9821}:8000"
     volumes:
-      - library-data:/app/data
       - ./frontend:/app/static:ro
+    networks:
+      - library-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/api/status')"]
       interval: 10s
       timeout: 5s
       retries: 5
+    depends_on:
+      postgres:
+        condition: service_healthy
 
   mcp:
     build:
@@ -26,15 +58,24 @@ services:
     container_name: library-mcp
     restart: unless-stopped
     environment:
-      DATABASE_PATH: /app/data/library.db
       PAGE_MAX_CHARS: ${PAGE_MAX_CHARS:-4000}
+      POSTGRES_URL: postgresql://${POSTGRES_USER:-libraryuser}:${POSTGRES_PASSWORD:-librarypassword}@postgres:5432/${POSTGRES_DB:-librarydb}
+      OLLAMA_HOST: ${OLLAMA_HOST:-http://host.docker.internal:11434}
+      OLLAMA_EMBED_MODEL: ${OLLAMA_EMBED_MODEL:-qwen3-embedding:0.6b}
+      EMBEDDING_DIMENSION: ${EMBEDDING_DIMENSION:-1024}
     ports:
       - "${MCP_PORT:-9823}:8000"
-    volumes:
-      - library-data:/app/data:ro
+    networks:
+      - library-network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     depends_on:
       api:
         condition: service_healthy
 
+networks:
+  library-network:
+    driver: bridge
+
 volumes:
-  library-data:
+  postgres-data:

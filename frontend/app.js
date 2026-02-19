@@ -14,6 +14,7 @@ let currentTotalPages = 0;
 let selectedFiles = [];
 let filterDebounceTimer = null;
 let entriesMap = {};
+let searchMode = 'fts'; // 'fts' or 'semantic'
 
 // DOM Elements
 const tabs = document.querySelectorAll('.tab');
@@ -268,6 +269,18 @@ searchInput.addEventListener('keydown', e => {
     if (e.key === 'Enter') doSearch();
 });
 
+// Search mode toggle
+const modeBtns = document.querySelectorAll('.mode-btn');
+modeBtns.forEach(btn => {
+    btn.addEventListener('click', () => {
+        searchMode = btn.dataset.mode;
+        modeBtns.forEach(b => b.classList.toggle('active', b === btn));
+        searchInput.placeholder = searchMode === 'semantic'
+            ? 'Describe what you\'re looking for...'
+            : 'Search across all books...';
+    });
+});
+
 async function doSearch() {
     const q = searchInput.value.trim();
     if (!q) return;
@@ -275,15 +288,30 @@ async function doSearch() {
     searchCount.textContent = '';
 
     try {
-        const params = new URLSearchParams({ q, limit: 50 });
-        const resp = await fetch(`${API_BASE}/search?${params}`);
-        const data = await resp.json();
-        if (!resp.ok) {
-            searchResults.innerHTML = `<p class="error">${data.detail || 'Search error'}</p>`;
-            return;
+        if (searchMode === 'semantic') {
+            const resp = await fetch(`${API_BASE}/semantic-search`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ query: q, limit: 20 }),
+            });
+            const data = await resp.json();
+            if (!resp.ok) {
+                searchResults.innerHTML = `<p class="error">${data.detail || 'Search error'}</p>`;
+                return;
+            }
+            searchCount.textContent = `${data.total_results} semantic results`;
+            renderSemanticResults(data.results);
+        } else {
+            const params = new URLSearchParams({ q, limit: 50 });
+            const resp = await fetch(`${API_BASE}/search?${params}`);
+            const data = await resp.json();
+            if (!resp.ok) {
+                searchResults.innerHTML = `<p class="error">${data.detail || 'Search error'}</p>`;
+                return;
+            }
+            searchCount.textContent = `${data.total_results} results`;
+            renderSearchResults(data.results);
         }
-        searchCount.textContent = `${data.total_results} results`;
-        renderSearchResults(data.results);
     } catch (err) {
         searchResults.innerHTML = `<p class="error">Search failed: ${err.message}</p>`;
     }
@@ -304,6 +332,20 @@ function renderSearchResults(results) {
             </div>
         `;
     }).join('');
+}
+
+function renderSemanticResults(results) {
+    if (results.length === 0) {
+        searchResults.innerHTML = '<p class="loading">No results found.</p>';
+        return;
+    }
+    searchResults.innerHTML = results.map(r => `
+        <div class="search-result-item" onclick="openSearchResult('${esc(r.entry_id)}', '${esc(r.section)}', ${r.page_number})">
+            <div class="search-result-title">${esc(r.title)}</div>
+            <div class="search-result-location">${esc(r.author)} · ${r.section} · page ${r.page_number}</div>
+            <div class="search-result-snippet">${esc(r.snippet)}</div>
+        </div>
+    `).join('');
 }
 
 function openSearchResult(entryId, section, page) {

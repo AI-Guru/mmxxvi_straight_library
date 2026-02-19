@@ -5,4 +5,11 @@ description = "Straight Library MCP Server"
 requires-python = ">=3.11"
 dependencies = [
     "fastmcp>=3.0.0",
+    # pgvector semantic search
+    "langgraph>=0.2.0",
+    "langgraph-checkpoint-postgres>=2.0.0",
+    "psycopg[binary]>=3.0.0",
+    "psycopg-pool>=3.0.0",
+    "langchain>=0.3.9",
+    "langchain-ollama>=0.3.0",
 ]

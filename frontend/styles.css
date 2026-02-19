@@ -336,6 +336,38 @@ header h1 {
     overflow-y: auto;
 }
 
+/* Search mode toggle */
+.search-mode-toggle {
+    display: flex;
+    gap: 0.25rem;
+    margin-bottom: 0.75rem;
+}
+
+.mode-btn {
+    background: var(--bg-elevated);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    padding: 0.4rem 1rem;
+    color: var(--text-muted);
+    font-family: inherit;
+    font-size: 0.7rem;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    cursor: pointer;
+    transition: all 0.2s;
+}
+
+.mode-btn:hover {
+    color: var(--text);
+    border-color: var(--text-muted);
+}
+
+.mode-btn.active {
+    color: var(--primary);
+    border-color: var(--primary);
+    background: var(--bg-dark);
+}
+
 /* Search */
 .search-bar {
     display: flex;

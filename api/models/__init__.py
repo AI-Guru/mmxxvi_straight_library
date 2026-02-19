@@ -5,6 +5,9 @@ from .schemas import (
     PageResponse,
     SearchResponse,
     SearchResult,
+    SemanticSearchRequest,
+    SemanticSearchResult,
+    SemanticSearchResponse,
     StatusResponse,
     UploadResponse,
 )
@@ -16,6 +19,9 @@ __all__ = [
     "PageResponse",
     "SearchResponse",
     "SearchResult",
+    "SemanticSearchRequest",
+    "SemanticSearchResult",
+    "SemanticSearchResponse",
     "StatusResponse",
     "UploadResponse",
 ]

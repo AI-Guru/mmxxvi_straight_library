@@ -1,13 +1,16 @@
+import asyncio
 import hashlib
 import json
 import re
 
 import yaml
 from fastapi import APIRouter, HTTPException, UploadFile, File
+from langchain_text_splitters import RecursiveCharacterTextSplitter
 
 from config import settings
-from database import get_db
+from database import get_pool
 from pagination import paginate_content
+from store import get_store, CHUNKS_NAMESPACE
 from models.schemas import UploadResponse
 
 router = APIRouter(prefix="/api", tags=["upload"])
@@ -91,68 +94,117 @@ async def upload_entry(file: UploadFile = File(...)):
     s_pages = paginate_content(parsed["summary"], settings.page_max_chars)
     ft_pages = paginate_content(parsed["fulltext"], settings.page_max_chars)
 
-    db = get_db()
-
     # Extract chapter markers from all sections.
     all_chapters = []
     all_chapters.extend(extract_chapters(ss_pages, "shortsummary"))
     all_chapters.extend(extract_chapters(s_pages, "summary"))
     all_chapters.extend(extract_chapters(ft_pages, "fulltext"))
 
-    # Delete old data for this entry (idempotent re-upload).
-    db.execute("DELETE FROM content_fts WHERE id = ?", (entry_id,))
-    for table in ("chapters", "shortsummary", "summary", "fulltext", "metadata"):
-        db.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
+    pool = await get_pool()
 
-    db.execute(
-        """INSERT INTO metadata
-           (id, title, author, publication_year, genre, custom_tags,
-            shortsummary_pages, summary_pages, fulltext_pages)
-           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
-        (
-            entry_id,
-            meta["title"],
-            meta["author"],
-            meta.get("publication_year"),
-            meta.get("genre"),
-            json.dumps(meta.get("custom_tags", [])),
-            len(ss_pages),
-            len(s_pages),
-            len(ft_pages),
-        ),
-    )
-
-    for page_num, page_content in enumerate(ss_pages, 1):
-        db.execute(
-            "INSERT INTO shortsummary (id, page, content) VALUES (?, ?, ?)",
-            (entry_id, page_num, page_content),
-        )
-    for page_num, page_content in enumerate(s_pages, 1):
-        db.execute(
-            "INSERT INTO summary (id, page, content) VALUES (?, ?, ?)",
-            (entry_id, page_num, page_content),
-        )
-    for page_num, page_content in enumerate(ft_pages, 1):
-        db.execute(
-            "INSERT INTO fulltext (id, page, content) VALUES (?, ?, ?)",
-            (entry_id, page_num, page_content),
-        )
-
-    for ch in all_chapters:
-        db.execute(
-            "INSERT INTO chapters (id, section, page, heading, level) VALUES (?, ?, ?, ?, ?)",
-            (entry_id, ch["section"], ch["page"], ch["heading"], ch["level"]),
-        )
-
-    # Index all pages in FTS5 for full-text search.
-    for section_name, pages in [("shortsummary", ss_pages), ("summary", s_pages), ("fulltext", ft_pages)]:
-        for page_num, page_content in enumerate(pages, 1):
-            db.execute(
-                "INSERT INTO content_fts (id, section, page, content) VALUES (?, ?, ?, ?)",
-                (entry_id, section_name, page_num, page_content),
+    async with pool.connection() as conn:
+        async with conn.transaction():
+            # Delete old data (CASCADE handles content tables, chapters, fts).
+            await conn.execute(
+                "DELETE FROM metadata WHERE id = %(id)s", {"id": entry_id}
             )
 
-    db.commit()
+            await conn.execute(
+                """INSERT INTO metadata
+                   (id, title, author, publication_year, genre, custom_tags,
+                    shortsummary_pages, summary_pages, fulltext_pages)
+                   VALUES (%(id)s, %(title)s, %(author)s, %(year)s, %(genre)s,
+                           %(tags)s, %(ss)s, %(s)s, %(ft)s)""",
+                {
+                    "id": entry_id,
+                    "title": meta["title"],
+                    "author": meta["author"],
+                    "year": meta.get("publication_year"),
+                    "genre": meta.get("genre"),
+                    "tags": json.dumps(meta.get("custom_tags", [])),
+                    "ss": len(ss_pages),
+                    "s": len(s_pages),
+                    "ft": len(ft_pages),
+                },
+            )
+
+            for page_num, page_content in enumerate(ss_pages, 1):
+                await conn.execute(
+                    "INSERT INTO shortsummary (id, page, content) VALUES (%(id)s, %(page)s, %(content)s)",
+                    {"id": entry_id, "page": page_num, "content": page_content},
+                )
+            for page_num, page_content in enumerate(s_pages, 1):
+                await conn.execute(
+                    "INSERT INTO summary (id, page, content) VALUES (%(id)s, %(page)s, %(content)s)",
+                    {"id": entry_id, "page": page_num, "content": page_content},
+                )
+            for page_num, page_content in enumerate(ft_pages, 1):
+                await conn.execute(
+                    "INSERT INTO fulltext (id, page, content) VALUES (%(id)s, %(page)s, %(content)s)",
+                    {"id": entry_id, "page": page_num, "content": page_content},
+                )
+
+            for ch in all_chapters:
+                await conn.execute(
+                    "INSERT INTO chapters (id, section, page, heading, level) VALUES (%(id)s, %(section)s, %(page)s, %(heading)s, %(level)s)",
+                    {"id": entry_id, "section": ch["section"], "page": ch["page"], "heading": ch["heading"], "level": ch["level"]},
+                )
+
+            # Index all pages for full-text search.
+            for section_name, pages in [("shortsummary", ss_pages), ("summary", s_pages), ("fulltext", ft_pages)]:
+                for page_num, page_content in enumerate(pages, 1):
+                    await conn.execute(
+                        "INSERT INTO content_fts (id, section, page, content) VALUES (%(id)s, %(section)s, %(page)s, %(content)s)",
+                        {"id": entry_id, "section": section_name, "page": page_num, "content": page_content},
+                    )
+
+    # Chunk and embed fulltext pages in pgvector for semantic search.
+    try:
+        store = await get_store()
+        chunk_namespace = (*CHUNKS_NAMESPACE, entry_id)
+
+        # Delete old embeddings (idempotent re-upload).
+        old_items = await store.asearch(chunk_namespace, query=None, limit=10000)
+        for old_item in old_items:
+            await store.adelete(chunk_namespace, old_item.key)
+
+        # Chunk fulltext pages into ~1000-char pieces with overlap.
+        text_splitter = RecursiveCharacterTextSplitter(
+            chunk_size=settings.chunk_size,
+            chunk_overlap=settings.chunk_overlap,
+        )
+
+        async def store_chunk(
+            page_num: int, chunk_idx: int, chunk_text: str
+        ) -> None:
+            chunk_key = f"p{page_num}_c{chunk_idx}"
+            await store.aput(
+                chunk_namespace,
+                chunk_key,
+                {
+                    "text": chunk_text,
+                    "entry_id": entry_id,
+                    "title": meta["title"],
+                    "author": meta["author"],
+                    "section": "fulltext",
+                    "page_number": page_num,
+                    "chunk_index": chunk_idx,
+                },
+            )
+
+        tasks = []
+        global_chunk_idx = 0
+        for page_num, page_content in enumerate(ft_pages, 1):
+            chunks = text_splitter.split_text(page_content)
+            for chunk_text in chunks:
+                tasks.append(store_chunk(page_num, global_chunk_idx, chunk_text))
+                global_chunk_idx += 1
+
+        if tasks:
+            await asyncio.gather(*tasks)
+    except Exception as e:
+        # PostgreSQL data is already committed — log but don't fail.
+        print(f"Warning: pgvector embedding failed for {entry_id}: {e}")
 
     return UploadResponse(
         status="ok",

@@ -6,19 +6,23 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import RedirectResponse
 
-from routers import library_router, upload_router
+from routers import library_router, upload_router, semantic_router
 from models.schemas import SearchResponse, SearchResult, StatusResponse
-from database import get_db, init_db, close_db
+from database import get_pool, init_db, close_pool
+from store import get_store, close_store
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     print("Library API starting up...")
-    init_db()
-    print("SQLite database initialized")
+    await init_db()
+    print("PostgreSQL database initialized")
+    await get_store()
+    print("pgvector store initialized")
     yield
     print("Library API shutting down...")
-    close_db()
+    await close_store()
+    await close_pool()
 
 
 app = FastAPI(
@@ -38,6 +42,7 @@ app.add_middleware(
 
 app.include_router(upload_router)
 app.include_router(library_router)
+app.include_router(semantic_router)
 
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
@@ -49,37 +54,42 @@ async def root():
 
 @app.get("/api/search", response_model=SearchResponse, tags=["search"])
 async def search_content(
-    q: str = Query(..., min_length=1, description="Search query (FTS5 syntax)"),
+    q: str = Query(..., min_length=1, description="Search query"),
     entry_id: Optional[str] = Query(default=None, description="Limit to specific entry"),
     section: Optional[str] = Query(default=None, description="Limit to section"),
     limit: int = Query(default=20, ge=1, le=50),
 ):
-    """Full-text search across all library content using FTS5."""
-    db = get_db()
+    """Full-text search across all library content using PostgreSQL FTS."""
+    pool = await get_pool()
 
-    where_parts = ["content_fts MATCH ?"]
-    params = [q]
+    where_parts = ["cf.tsv @@ websearch_to_tsquery('english', %(q)s)"]
+    params = {"q": q, "limit": limit}
 
     if entry_id:
-        where_parts.append("content_fts.id = ?")
-        params.append(entry_id)
+        where_parts.append("cf.id = %(entry_id)s")
+        params["entry_id"] = entry_id
     if section:
-        where_parts.append("content_fts.section = ?")
-        params.append(section)
+        where_parts.append("cf.section = %(section)s")
+        params["section"] = section
 
     where_sql = " AND ".join(where_parts)
 
-    rows = db.execute(
-        f"""SELECT content_fts.id, content_fts.section, content_fts.page,
-                   snippet(content_fts, 3, '>>>', '<<<', '...', 32) as snippet,
-                   metadata.title
-            FROM content_fts
-            JOIN metadata ON metadata.id = content_fts.id
-            WHERE {where_sql}
-            ORDER BY rank
-            LIMIT ?""",
-        params + [limit],
-    ).fetchall()
+    async with pool.connection() as conn:
+        cur = await conn.execute(
+            f"""SELECT cf.id, cf.section, cf.page,
+                       ts_headline('english', cf.content,
+                           websearch_to_tsquery('english', %(q)s),
+                           'StartSel=>>>,StopSel=<<<,MaxFragments=1,MaxWords=32'
+                       ) as snippet,
+                       m.title
+                FROM content_fts cf
+                JOIN metadata m ON m.id = cf.id
+                WHERE {where_sql}
+                ORDER BY ts_rank(cf.tsv, websearch_to_tsquery('english', %(q)s)) DESC
+                LIMIT %(limit)s""",
+            params,
+        )
+        rows = await cur.fetchall()
 
     results = [
         SearchResult(
@@ -97,8 +107,10 @@ async def search_content(
 
 @app.get("/api/status", response_model=StatusResponse, tags=["health"])
 async def health_check():
-    db = get_db()
-    row = db.execute("SELECT COUNT(*) as cnt FROM metadata").fetchone()
+    pool = await get_pool()
+    async with pool.connection() as conn:
+        cur = await conn.execute("SELECT COUNT(*) as cnt FROM metadata")
+        row = await cur.fetchone()
     return StatusResponse(
         status="healthy",
         version="1.0.0",
