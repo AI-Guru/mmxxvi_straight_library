@@ -100,6 +100,7 @@ async def upload_entry(file: UploadFile = File(...)):
     all_chapters.extend(extract_chapters(ft_pages, "fulltext"))
 
     # Delete old data for this entry (idempotent re-upload).
+    db.execute("DELETE FROM content_fts WHERE id = ?", (entry_id,))
     for table in ("chapters", "shortsummary", "summary", "fulltext", "metadata"):
         db.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
 
@@ -142,6 +143,14 @@ async def upload_entry(file: UploadFile = File(...)):
             "INSERT INTO chapters (id, section, page, heading, level) VALUES (?, ?, ?, ?, ?)",
             (entry_id, ch["section"], ch["page"], ch["heading"], ch["level"]),
         )
+
+    # Index all pages in FTS5 for full-text search.
+    for section_name, pages in [("shortsummary", ss_pages), ("summary", s_pages), ("fulltext", ft_pages)]:
+        for page_num, page_content in enumerate(pages, 1):
+            db.execute(
+                "INSERT INTO content_fts (id, section, page, content) VALUES (?, ?, ?, ?)",
+                (entry_id, section_name, page_num, page_content),
+            )
 
     db.commit()
 

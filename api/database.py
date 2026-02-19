@@ -68,6 +68,13 @@ def init_db():
             FOREIGN KEY (id) REFERENCES metadata(id)
         );
 
+        CREATE VIRTUAL TABLE IF NOT EXISTS content_fts USING fts5(
+            id UNINDEXED,
+            section UNINDEXED,
+            page UNINDEXED,
+            content
+        );
+
         CREATE INDEX IF NOT EXISTS idx_metadata_title ON metadata(title);
         CREATE INDEX IF NOT EXISTS idx_metadata_author ON metadata(author);
         CREATE INDEX IF NOT EXISTS idx_metadata_genre ON metadata(genre);

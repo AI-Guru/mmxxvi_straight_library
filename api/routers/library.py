@@ -138,6 +138,7 @@ async def delete_entry(entry_id: str):
         raise HTTPException(status_code=404, detail=f"Entry {entry_id} not found")
 
     title = row["title"]
+    db.execute("DELETE FROM content_fts WHERE id = ?", (entry_id,))
     for table in ("chapters", "shortsummary", "summary", "fulltext", "metadata"):
         db.execute(f"DELETE FROM {table} WHERE id = ?", (entry_id,))
     db.commit()

@@ -43,6 +43,20 @@ class DeleteResponse(BaseModel):
     message: str
 
 
+class SearchResult(BaseModel):
+    entry_id: str
+    title: str
+    section: str
+    page: int
+    snippet: str
+
+
+class SearchResponse(BaseModel):
+    results: List[SearchResult]
+    total_results: int
+    query: str
+
+
 class StatusResponse(BaseModel):
     status: str
     version: str = "1.0.0"

@@ -3,6 +3,8 @@ from .schemas import (
     EntryMetadata,
     EntryListResponse,
     PageResponse,
+    SearchResponse,
+    SearchResult,
     StatusResponse,
     UploadResponse,
 )
@@ -12,6 +14,8 @@ __all__ = [
     "EntryMetadata",
     "EntryListResponse",
     "PageResponse",
+    "SearchResponse",
+    "SearchResult",
     "StatusResponse",
     "UploadResponse",
 ]

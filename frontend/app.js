@@ -257,6 +257,98 @@ function goPage(page) {
     loadPage();
 }
 
+// Search
+const searchInput = document.getElementById('search-input');
+const searchBtn = document.getElementById('search-btn');
+const searchCount = document.getElementById('search-count');
+const searchResults = document.getElementById('search-results');
+
+searchBtn.addEventListener('click', () => doSearch());
+searchInput.addEventListener('keydown', e => {
+    if (e.key === 'Enter') doSearch();
+});
+
+async function doSearch() {
+    const q = searchInput.value.trim();
+    if (!q) return;
+    searchResults.innerHTML = '<p class="loading">Searching...</p>';
+    searchCount.textContent = '';
+
+    try {
+        const params = new URLSearchParams({ q, limit: 50 });
+        const resp = await fetch(`${API_BASE}/search?${params}`);
+        const data = await resp.json();
+        if (!resp.ok) {
+            searchResults.innerHTML = `<p class="error">${data.detail || 'Search error'}</p>`;
+            return;
+        }
+        searchCount.textContent = `${data.total_results} results`;
+        renderSearchResults(data.results);
+    } catch (err) {
+        searchResults.innerHTML = `<p class="error">Search failed: ${err.message}</p>`;
+    }
+}
+
+function renderSearchResults(results) {
+    if (results.length === 0) {
+        searchResults.innerHTML = '<p class="loading">No results found.</p>';
+        return;
+    }
+    searchResults.innerHTML = results.map(r => {
+        const snippet = esc(r.snippet).replace(/&gt;&gt;&gt;/g, '<span class="hl">').replace(/&lt;&lt;&lt;/g, '</span>');
+        return `
+            <div class="search-result-item" onclick="openSearchResult('${esc(r.entry_id)}', '${esc(r.section)}', ${r.page})">
+                <div class="search-result-title">${esc(r.title)}</div>
+                <div class="search-result-location">${r.section} · page ${r.page}</div>
+                <div class="search-result-snippet">${snippet}</div>
+            </div>
+        `;
+    }).join('');
+}
+
+function openSearchResult(entryId, section, page) {
+    // We need metadata for the entry. Fetch it first if not cached.
+    if (entriesMap[entryId]) {
+        openEntryAt(entryId, entriesMap[entryId], section, page);
+    } else {
+        // Fetch metadata via list_entries with a targeted approach
+        fetch(`${API_BASE}/entries?limit=1&title=`)
+            .then(() => {
+                // Just open with minimal info
+                openEntryAt(entryId, null, section, page);
+            });
+    }
+}
+
+function openEntryAt(id, meta, section, page) {
+    currentEntryId = id;
+    currentEntryMeta = meta;
+    currentSection = section;
+    currentPage = page;
+
+    // Switch to read tab
+    tabs.forEach(t => t.classList.remove('active'));
+    tabContents.forEach(c => c.classList.remove('active'));
+    document.querySelector('[data-tab="read"]').classList.add('active');
+    document.getElementById('tab-read').classList.add('active');
+
+    window.scrollTo(0, 0);
+    readPlaceholder.style.display = 'none';
+    readContent.style.display = 'block';
+
+    if (meta) {
+        readEntryInfo.innerHTML = `
+            <h2>${esc(meta.title)}</h2>
+            <div class="meta">${esc(meta.author)}${meta.publication_year ? ` (${meta.publication_year})` : ''}${meta.genre ? ` · ${esc(meta.genre)}` : ''}</div>
+        `;
+    } else {
+        readEntryInfo.innerHTML = `<h2>Entry ${id}</h2>`;
+    }
+
+    sectionBtns.forEach(b => b.classList.toggle('active', b.dataset.section === section));
+    loadPage();
+}
+
 // Utility
 function esc(str) {
     const el = document.createElement('span');

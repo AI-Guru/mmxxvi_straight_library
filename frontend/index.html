@@ -13,6 +13,7 @@
             <nav class="tabs">
                 <button class="tab active" data-tab="browse">Browse</button>
                 <button class="tab" data-tab="read">Read</button>
+                <button class="tab" data-tab="search">Search</button>
                 <button class="tab" data-tab="upload">Upload</button>
             </nav>
         </header>
@@ -47,6 +48,18 @@
                         <p class="loading">Loading entries...</p>
                     </div>
                     <div class="pagination" id="entries-pagination"></div>
+                </div>
+            </section>
+
+            <!-- Search Tab -->
+            <section class="tab-content" id="tab-search">
+                <div class="card">
+                    <div class="search-bar">
+                        <input type="text" id="search-input" placeholder="Search across all books...">
+                        <button id="search-btn">Search</button>
+                    </div>
+                    <div id="search-count" class="count"></div>
+                    <div id="search-results" class="search-results"></div>
                 </div>
             </section>
 

@@ -335,80 +335,72 @@ def search_content(
     query: str,
     entry_id: Optional[str] = None,
     section: Optional[str] = None,
+    limit: int = 20,
 ) -> dict:
-    """Search for text within book content.
+    """Search for text across the entire library using full-text search.
 
-    Performs a case-insensitive substring search across page content. Returns
-    matching pages with short snippets showing where the query appears.
-    Use this to find specific topics, quotes, or passages without reading
-    every page.
+    Powered by SQLite FTS5. Results are ranked by relevance with highlighted
+    snippets (matches wrapped in >>> and <<<).
+
+    Supports FTS5 query syntax:
+      - Simple keywords: "consciousness"
+      - Phrases: '"stream of consciousness"'
+      - Boolean: "consciousness AND philosophy"
+      - Prefix: "conscious*"
+      - Negation: "consciousness NOT freud"
 
     Args:
-        query: Text to search for (case-insensitive substring match).
-        entry_id: Optional — limit search to a specific book. If omitted,
-            searches all books (returns up to 50 results).
-        section: Optional — limit search to a specific section (shortsummary,
-            summary, or fulltext). If omitted, searches all sections.
+        query: Search query (FTS5 syntax supported).
+        entry_id: Optional — limit search to a specific book.
+        section: Optional — limit to shortsummary, summary, or fulltext.
+        limit: Max results to return (default 20, max 50).
 
     Returns:
         Dictionary with 'results' list (each has entry_id, title, section,
-        page, and snippet) and 'total_matches' count.
+        page, and snippet with highlights) and 'total_results' count.
     """
     if section and section not in VALID_SECTIONS:
         return {"error": f"Section must be one of: {', '.join(VALID_SECTIONS)}"}
 
     db = get_db()
-    results = []
-    max_results = 50
+    limit = min(limit, 50)
 
-    sections_to_search = [section] if section else list(VALID_SECTIONS)
+    where_parts = ["content_fts MATCH ?"]
+    params = [query]
 
-    for sec in sections_to_search:
-        where_clauses = [f"{sec}.content LIKE ?"]
-        params = [f"%{query}%"]
+    if entry_id:
+        where_parts.append("content_fts.id = ?")
+        params.append(entry_id)
+    if section:
+        where_parts.append("content_fts.section = ?")
+        params.append(section)
 
-        if entry_id:
-            where_clauses.append(f"{sec}.id = ?")
-            params.append(entry_id)
+    where_sql = " AND ".join(where_parts)
 
-        where_sql = " AND ".join(where_clauses)
+    rows = db.execute(
+        f"""SELECT content_fts.id, content_fts.section, content_fts.page,
+                   snippet(content_fts, 3, '>>>', '<<<', '...', 32) as snippet,
+                   metadata.title
+            FROM content_fts
+            JOIN metadata ON metadata.id = content_fts.id
+            WHERE {where_sql}
+            ORDER BY rank
+            LIMIT ?""",
+        params + [limit],
+    ).fetchall()
 
-        rows = db.execute(
-            f"""SELECT {sec}.id, {sec}.page, {sec}.content, metadata.title
-                FROM {sec}
-                JOIN metadata ON metadata.id = {sec}.id
-                WHERE {where_sql}
-                ORDER BY metadata.title, {sec}.page
-                LIMIT ?""",
-            params + [max_results - len(results)],
-        ).fetchall()
+    results = [
+        {
+            "entry_id": row["id"],
+            "title": row["title"],
+            "section": row["section"],
+            "page": row["page"],
+            "snippet": row["snippet"],
+        }
+        for row in rows
+    ]
 
-        for row in rows:
-            content = row["content"]
-            # Extract a snippet around the first match.
-            lower_content = content.lower()
-            idx = lower_content.find(query.lower())
-            if idx >= 0:
-                start = max(0, idx - 80)
-                end = min(len(content), idx + len(query) + 80)
-                snippet = ("..." if start > 0 else "") + content[start:end] + ("..." if end < len(content) else "")
-            else:
-                snippet = content[:160] + "..."
-
-            results.append(
-                {
-                    "entry_id": row["id"],
-                    "title": row["title"],
-                    "section": sec,
-                    "page": row["page"],
-                    "snippet": snippet,
-                }
-            )
-
-        if len(results) >= max_results:
-            break
-
-    return {"results": results, "total_matches": len(results)}
+    return {"results": results, "total_results": len(results)}
 
 
 if __name__ == "__main__":
