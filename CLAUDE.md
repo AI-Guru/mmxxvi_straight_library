@@ -102,6 +102,21 @@ fulltext content
 
 The `data/` directory is gitignored. Book source files live in `data/books-collection/MyCollection/` organized by letter subdirectories.
 
+## Testing
+
+Integration tests live in `tests/` and run against the live Docker services. They use a self-contained fixture (`test_fixture.md`) that uploads a test entry, runs assertions, and cleans up on teardown.
+
+```bash
+cd tests
+uv sync                          # install pytest + requests
+uv run pytest . -v               # run all 33 tests (API + MCP)
+uv run pytest test_api.py -v     # API tests only
+uv run pytest test_mcp.py -v     # MCP tests only
+uv run pytest . -v -k "not semantic"  # skip semantic search (no Ollama)
+```
+
+Prerequisites: Docker services must be running and healthy. Semantic search tests auto-skip if Ollama is unavailable.
+
 ## Notes
 
 - No authentication — read-only access by design
