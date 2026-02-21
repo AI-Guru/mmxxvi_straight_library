@@ -80,7 +80,7 @@ def extract_chapters(pages: list[str], section: str) -> list[dict]:
 async def upload_entry(file: UploadFile = File(...)):
     """Upload a _libraryentry.md file to the library."""
     content_bytes = await file.read()
-    content = content_bytes.decode("utf-8")
+    content = content_bytes.decode("utf-8").replace("\x00", "")
 
     try:
         parsed = parse_library_entry(content)
